@@ -1,0 +1,47 @@
+set term post portrait enh color solid 18
+set out 'pprof.__mm__.__nn__.ps'
+set xlabel 'x distance along profile [km]'
+set ylabel 'velocitiy perpendicular to profile [mm/yr]'
+
+
+yr=25				# vel range
+#xr=200				# limit x range for fit
+#xr=300				# limit x range for fit
+xr=1000
+
+o=20				# offset
+w=30				# width
+s=15				# scale
+do=0.1				# slip offset
+
+
+
+f(x) = atan(-(o+x)/w)/pi*s+do
+fit f(x) 'vprof.__mm__.__nn__.dat' using ((($1<xr)&&($1>-xr))?($1):(1/0)) : ($4) : ($5) via o, w, s,do
+
+
+set yrange [-yr:yr]
+set arrow from 0,-yr to 0,yr nohead lt 0 lw 3
+set arrow from -o,-yr to -o,yr nohead lt 3 lw 3
+
+
+set label 'x_{off} = %.0f km',-o  at 45, 20
+set label 'L_{depth} = %.0f km',w  at 45, 15
+set label '{/Symbol D}v = %.1f mm/yr',s  at 45, 10
+#set label 'v_{shift} = %.2f mm/yr',do  at 45, 5
+
+set multi
+set size 1,.5
+set origin 0,.5
+
+set title '__mm__, profile __nn__, data used for fit'
+plot 'vprof.__mm__.__nn__.dat' using ((($1<xr)&&($1>-xr))?($1):(1/0)) : ($4) : ($5) w err title '' lw 3 , \
+     f(x) lt 3 lw 7 title '' , 0 lt 0 lw 3 title '',do lt 3 lw 3 title ''
+
+set nolabel
+set origin 0,0
+# all data
+set title '__mm__, profile __nn__, all data along profile'
+plot 'vprof.__mm__.__nn__.dat' using 1  : ($4) w p title '' pt 5 ps 0.5 , \
+     f(x) lt 3 lw 1 title '' , 0 lt 0 lw 3 title '',do lt 3 lw 3 title ''
+

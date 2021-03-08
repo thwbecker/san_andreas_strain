@@ -1,0 +1,34 @@
+#!/bin/bash
+
+model_types=${1-"constrained_locfixed.29 constrained_locfixed.14"}
+use_hist=${2-0}
+afs=${3-"0 1 2 3"} # "0 1 2 3"
+models=${4-"kreemer_pbo2 kreemer_pbo kreemer_pbo3"} # "kreemer_pbo2 kreemer_pbo kreemer_pbo3"
+profiles=${5-"1a.6 1b.6 1c.5  2b.13 3.5 4.5 5.6 6.4"}
+gv=${6-0}			# 1: show gv 2: print 3: make PDF
+long_label=${7-1}
+
+for model_type in $model_types;do
+    for pt in $models;do	
+	for af in $afs;do
+#	for pn in 1a 1b 1c 2a 2b 3 4 5 6;do 
+	    for pn in $profiles;do 
+		model=$pt.$pn.$af
+		if [ -s results/$model_type/$model/ ];then
+		    echo $0: working on results/$modehl_type/$model/ pinvert_sol $model $model_type $use_hist
+
+		    pinvert_sol $model $model_type $use_hist 1 1 0 $gv $long_label # with EPS and labels
+#		pinvert_sol $model $model_type $use_hist 0 0 0 $gv # without EPS and labels
+		    
+		    
+#		gv plots_`echo $model_type`/$model.pdf
+		else
+		    echo 
+		    echo results/$model_type/$model/ does not exist
+		    echo
+		fi
+	    done
+	done
+    done
+done
+
