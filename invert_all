@@ -1,0 +1,128 @@
+#!/bin/bash
+#
+# run a bunch of monte carlo inversions with fixed fault locations
+#
+models=${1-"kree_pbon_rf42 kreemer_pbo kreemer_pbo2 kreemer_pbo3 "}		# datasets
+profs=${2-"1a 1b 1c 2a 2b 3 4 5 6"}	# profiles
+faults=${3-"1 2 3 4 5"}	# number of faults
+ld=${4-14}			# max locking depth-1
+avg=${5-0}
+
+umin=0			# minimum slip on a fault
+
+name=free.$ld
+
+
+
+if [ ! -s plots_`echo $name`/ ];then		# plot output dir
+    mkdir plots_`echo $name`
+fi
+if [ ! -s logs_`echo $name` ];then		# log file dir 
+    mkdir logs_`echo $name`
+fi
+
+tmpd=/tmp/$USER.$HOST.$$.c/
+trap "rm -rf $tmpd ; exit" 0 1 2 15
+owd=`pwd`
+mkdir $tmpd
+
+for model in $models;do
+
+
+#
+# copy the data files
+#
+    rm -r $tmpd/* 2> /dev/null
+    cp vprof.$model.*.dat $tmpd
+    cd $tmpd
+
+    for fault in $faults;do	
+	for prof in $profs ;do
+	    
+	    rm invert.bestsol.dat invert.dat.out invert.fit.?.out fault.in invert.fit.out invert.ps 2> /dev/null
+	    rm $owd/logs_`echo $name`/$model.$prof.$func.log invert.log 2> /dev/null
+	    echo
+	    echo $0: running free location $prof $func $model  max ld $ld
+	    echo
+
+	    xmin=999;xmax=999
+
+	    func=$fault
+	    gawk -v n=$func 'BEGIN{for(i=1;i<=n;i++){print(0);print(0)}}' > tmp.in
+
+
+	    
+	#
+	# get some default values for the boundaries
+	#
+	    gawk '{print($1,$4,$5)}' vprof.$model.$prof.dat  > gps.dat
+
+	    minmax -C gps.dat | gawk '{xmin=$1-0.1;xmax=$2+0.1;range=xmax-xmin;print(xmin,xmax)}' > tmp.$$.dat
+	    read xmina xmaxa < tmp.$$.dat ; rm tmp.$$.dat
+	    if [ $xmin -eq 999 ];then
+		xmin=$xmina
+	    fi
+	    if [ $xmax -eq 999 ];then
+		xmax=$xmaxa
+	    fi
+	    if [ $avg -eq 1 ];then
+		binary=$owd/bin/invert_old
+	    else
+		binary=$owd/bin/invert_noavg
+	    fi
+
+	    echo $0: WARNING: using $binary
+	    echo
+	    rm invert.bestsol.dat invert.dat.out invert.fit.out  invert.log invert.fit.*.out 2> /dev/null
+
+	    ((use_func=100+func))
+	    $binary gps.dat $use_func $xmin $xmax 0 $ld $umin < tmp.in > invert.log #2>> invert.log
+
+	    rodir=$owd/results/$name/$model.$prof.$func/
+	    mkdir -p $rodir
+	    rm $rodir/* 2> /dev/null
+	    for cf in invert.bestsol.dat invert.chi2.dat invert.dat.out invert.fit.out  ;do
+		cp $cf $rodir/
+	    done
+	    iii=1
+	    while [ -s invert.fit.$iii.out ];do # single fault solution
+		cp invert.fit.$iii.out  $rodir/
+		((iii=iii+1))
+	    done
+	    
+
+	    
+
+
+	    if [ ! -s  invert.log ];then
+		echo $0: inversion did not complete 
+	    else
+		cat invert.log
+	    fi
+	    #
+	    # store log
+	    #
+	    cp invert.log  $rodir/
+
+
+	    # do an Lev Mar inversion
+	    rm invert.lm.log  invert.bestsol.dat invert.dat.out invert.fit.out  invert.log invert.fit.*.out \
+		invert.lmcov.out invert.fit.out 2> /dev/null 
+	    $binary  gps.dat -$func $xmin $xmax 0 $ld $umin < tmp.in > invert.lm.log 
+	    cp invert.lm.log $rodir/
+	    cp invert.lmcov.out $rodir/
+	    cp invert.fit.out $rodir/invert.lm.fit.log
+	    cp invert.chi2.dat $rodir/invert.lm.chi2.dat
+
+
+	    gzip -f $rodir/*
+
+	    #
+	    # plot
+	    #
+	    $owd/pinvert_sol $model.$prof.$func $name 1
+	    rm gps.dat	tmp.in
+	done
+    done
+    cd $owd
+done

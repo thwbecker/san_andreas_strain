@@ -1,0 +1,92 @@
+#!/bin/bash
+#
+# run a bunch of monte carlo inversions
+#
+dxs=${1-"1.5"}			# averaging length
+models=${2-"kreemer_pbo2 kreemer_pbo kreemer pbo"}		# datasets
+funcs=${3-"1 2 3 4 5"}		# number of faults
+profs=${4-"1a 1b 1c 2a 2b 3 4 5 6"}	# profiles
+
+
+
+
+tmpd=/tmp/$USER.$HOST.$$/
+trap "rm -rf $tmpd ; exit" 0 1 2 15
+owd=`pwd`
+mkdir $tmpd
+
+for dx in $dxs;do
+    if [ ! -s plots_averaged.$dx/ ];then		# plot output dir
+	mkdir plots_averaged.$dx
+    fi
+    if [ ! -s logs_averaged.$dx ];then		# log file dir 
+	mkdir logs_averaged.$dx
+    fi
+done
+
+for model in $models;do		# loop through models
+
+
+    for dx in $dxs;do		# loop through averaging
+#
+# copy the data files
+#
+	rm $tmpd/* 2> /dev/null
+	cp vprof.$model.*.dat $tmpd
+	cd $tmpd
+
+	for func in $funcs;do
+	    for prof in $profs ;do
+		rm invert.bestsol.dat invert.dat.out invert.fit.?.out invert.fit.out invert.ps 2> /dev/null
+		rm $owd/logs_averaged.$dx/$model.$prof.$func.log invert.log 2> /dev/null
+		echo
+		echo $0: running  $prof $func $model
+		echo
+		gawk '{print($1,$4,$5)}' vprof.$model.$prof.dat | gawk -v dx=$dx -f $owd/filter.awk > gps.dat
+		title="$model.$prof"
+
+
+		minmax -C gps.dat | gawk '{xmin=$1-0.1;xmax=$2+0.1;range=xmax-xmin;print(xmin,xmax)}' > tmp.$$.dat
+		read xmin xmax < tmp.$$.dat ; rm tmp.$$.dat
+
+		gawk -v nf=$func 'BEGIN{for(i=1;i<=nf;i++){print(0);print(0)}}' > tmp.in
+		$owd/bin/invert  gps.dat $func $xmin $xmax > invert.log < tmp.in
+		rm tmp.in
+
+		if [ ! -s  invert.log ];then
+		    echo $0: inversion error
+		    exit
+		fi
+		cat invert.log
+		
+		cp invert.bestsol.dat $owd/logs_averaged.$dx/$model.$prof.$func.bestsol
+		cp invert.fit.out  $owd/logs_averaged.$dx/$model.$prof.$func.fit.out
+		cp invert.dat.out  $owd/logs_averaged.$dx/$model.$prof.$func.dat.out
+	#
+	# plot (needs invert.log)
+	#
+		$owd/pinvert_sol "$title"
+		if [ -s invert.ps ];then
+		    ps2pdf invert.ps; rm invert.ps; mv invert.pdf $owd/plots_averaged.$dx/$model.$prof.$func.pdf
+		    rm invert.bestsol.dat invert.dat.out invert.fit.?.out invert.fit.out  2> /dev/null
+		else
+		    echo $0: plotting error
+		    exit
+		fi
+	    #
+	    # store log
+	    #
+		mv invert.log  $owd/logs_averaged.$dx/$model.$prof.$func.log
+		gzip -f $owd/logs_averaged.$dx/$model.$prof.$func.*
+
+		rm gps.dat
+
+	    done
+
+
+	done
+
+	cd $owd
+
+    done
+done

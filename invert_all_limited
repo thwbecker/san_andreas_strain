@@ -1,0 +1,104 @@
+#!/bin/bash
+#
+# run a bunch of monte carlo inversions, somewhat limited parameter range
+#
+models=${1-"kreemer_pbo2 kreemer_pbo"}		# datasets
+funcs=${2-"1 2 3 4 5 6"}		# number of faults
+profs=${3-"1a 1b 1c 2a 2b 3 4 5 6"}	# profiles
+make=${4-0}
+
+if [ $make -eq 1 ];then
+    make
+fi
+name=limited
+if [ ! -s plots_`echo $name`/ ];then		# plot output dir
+    mkdir plots_`echo $name`
+fi
+if [ ! -s logs_`echo $name` ];then		# log file dir 
+    mkdir logs_`echo $name` 
+fi
+
+tmpd=/tmp/$USER.$HOST.$$/
+trap "rm -rf $tmpd ; exit" 0 1 2 15
+owd=`pwd`
+mkdir $tmpd
+
+for model in $models;do
+
+#
+# copy the data files
+#
+    rm $tmpd/* 2> /dev/null
+    cp vprof.$model.*.dat $tmpd
+    cd $tmpd
+
+    for func in $funcs;do
+	for prof in $profs ;do
+	    rm invert.bestsol.dat invert.dat.out invert.fit.?.out invert.fit.out invert.ps 2> /dev/null
+	    rm $owd/logs_`echo $name`/$model.$prof.$func.log invert.log 2> /dev/null
+	    echo
+	    echo $0: running  $prof $func $model
+	    echo
+	    gawk '{print($1,$4,$5)}' vprof.$model.$prof.dat > gps.dat
+	    title="$model.$prof"
+
+	    minmax -C gps.dat | gawk '{xmin=$1-0.1;xmax=$2+0.1;range=xmax-xmin;print(xmin,xmax)}' > tmp.$$.dat
+	    read xmin xmax < tmp.$$.dat ; rm tmp.$$.dat
+	    # generate input
+	    gawk -v nf=$func 'BEGIN{for(i=1;i<=nf;i++){print(0);print(0)}}' > tmp.in
+	    #
+	    # limit to 30 km locking depth and minimum slip of 2 mm/yr
+	    #
+	    #
+	    $owd/bin/invert  gps.dat $func $xmin $xmax 0 29 2 > invert.log < tmp.in
+	    rm tmp.in
+	    
+	    rodir=$owd/results/$name/$model.$prof.$func.$add_fault/
+	    mkdir -p $rodir
+	    rm $rodir/* 2> /dev/null
+	    for cf in invert.bestsol.dat invert.dat.out invert.fit.out  ;do
+		cp $cf $rodir/
+	    done
+
+
+
+	    if [ ! -s  invert.log ];then
+		echo $0: inversion error
+	    fi
+	    cat invert.log
+
+	#
+	# plot (needs invert.log)
+	#
+	    $owd/pinvert_sol -1 $name 1
+	    if [ -s invert.ps ];then
+	#epstopdf invert.ps; rm invert.ps; mv invert.pdf $owd/plots_`echo $name`/$model.$prof.$func.pdf
+		ps2pdf invert.ps; rm invert.ps; mv invert.pdf $owd/plots_`echo $name`/$model.$prof.$func.pdf
+	#gv  plots_`echo $name`/$model.$prof.$func.pdf &
+		rm invert.bestsol.dat invert.dat.out invert.fit.?.out invert.fit.out  2> /dev/null
+	    else
+		echo $0: plotting error
+	    fi
+	    #
+	    # store log
+	    #
+	    cp invert.log  $rodir/
+
+	    rm invert.fit.log
+	    $owd/bin/invert gps.dat -$func $xmin $xmax $add_fault $ld < tmp.in > invert.lm.log 
+	    cp invert.lm.log $rodir/
+	    cp invert.lmcov.out $rodir/
+	    cp invert.fit.out $rodir/invert.lm.fit.log
+
+
+	    rm gps.dat
+
+	    gzip -f $rodir/*
+	done
+
+
+    done
+
+    cd $owd
+
+done

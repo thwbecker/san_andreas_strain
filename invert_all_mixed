@@ -1,0 +1,415 @@
+#!/bin/bash
+#
+# run a bunch of monte carlo inversions using some constrained, plus additional faults
+#
+models=${1-"kreemer_pbo kreemer_pbo2 "}		# datasets
+profs=${2-"1a 1b 1c 2a 2b 3 4 5 6"}	# profiles
+add_faults=${3-"0 1 2 "}	# additional, random faults
+dx=${4-0}			# averaged
+ld=${5-10}			# specified locking depth
+
+
+name=constrained_mixed.$ld.$dx
+
+
+
+if [ ! -s plots_`echo $name`/ ];then		# plot output dir
+    mkdir plots_`echo $name`
+fi
+if [ ! -s logs_`echo $name` ];then		# log file dir 
+    mkdir logs_`echo $name`
+fi
+
+tmpd=/tmp/$USER.$HOST.$$.c/
+trap "rm -rf $tmpd ; exit" 0 1 2 15
+owd=`pwd`
+mkdir $tmpd
+
+for model in $models;do
+
+
+#
+# copy the data files
+#
+    rm -r $tmpd/* 2> /dev/null
+    cp vprof.$model.*.dat $tmpd
+    cd $tmpd
+
+    for add_fault in $add_faults;do	
+	for prof in $profs ;do
+	    
+	    rm invert.bestsol.dat invert.dat.out invert.fit.?.out fault.in invert.fit.out invert.ps 2> /dev/null
+	    rm $owd/logs_`echo $name`/$model.$prof.$func.log invert.log 2> /dev/null
+	    echo
+	    echo $0: running mixed constrained $prof $func $model additional faults $add_fault
+	    echo
+
+	    xmin=999;xmax=999
+	    case $prof in
+		1a)
+		    func=6
+		    cat << EOF > tmp.in
+1 
+-170
+1 
+$ld
+
+1
+-70
+1
+$ld
+
+1
+-42
+0
+
+1 
+-30
+0
+
+1
+0
+0
+
+1
+30
+1
+$ld
+
+EOF
+		    ;;
+
+		1b)
+		    func=6
+		    cat << EOF > tmp.in
+1 
+-150
+1 
+$ld
+
+1
+-78
+1
+$ld
+
+1
+-44
+0
+
+1 
+-38
+0
+
+1
+0
+0
+
+1
+30
+1
+$ld
+
+EOF
+		    ;;
+		1c)
+		    func=5
+		    cat << EOF > tmp.in
+1 
+-140
+1 
+$ld
+
+1
+-80
+1
+$ld
+
+1
+-43
+0
+
+1
+0
+0
+
+1
+30
+1
+$ld
+
+EOF
+		    ;;
+
+
+		2a)
+		    func=1
+		    cat <<EOF > tmp.in
+1
+0
+1
+$ld
+EOF
+
+
+		    ;;
+		2b)
+		    # corrected by -3
+		    func=15
+		    cat << EOF > tmp.in
+1 
+-147
+1
+$ld
+
+1
+-129
+1
+$ld
+
+1
+-83
+1
+$ld
+
+1
+-64
+1
+$ld
+
+1
+-33
+1
+$ld
+
+1
+0
+0
+
+1
+38
+1
+$ld
+
+1
+59
+1
+$ld
+
+1
+78
+1
+$ld
+
+1
+95
+1
+$ld
+
+1
+106
+1
+$ld
+
+1
+132
+1
+$ld
+
+1
+164
+1
+$ld
+
+1
+190
+1
+$ld
+
+1
+237
+1
+$ld
+
+
+
+EOF
+		    ;;
+		3)
+		    func=5
+		    cat << EOF > tmp.in
+1
+-45
+1
+$ld
+
+1
+0
+0
+
+1
+220
+1
+$ld
+
+1
+245
+1
+$ld
+
+1
+295
+1
+$ld
+
+
+EOF
+		    ;;
+		4)
+		    func=6
+cat <<EOF > tmp.in
+1
+-70
+0
+
+1
+-31
+0
+
+1
+0
+1
+$ld
+
+1
+225
+0
+
+1
+250
+0
+
+1
+275
+0
+
+EOF
+
+		    ;;
+		5)
+		    # corrected by 3
+		    func=8
+		    cat << EOF > tmp.in
+1
+-11
+1
+$ld
+
+1
+0
+0
+
+1
+30
+0
+
+1
+53
+0
+
+1
+263
+0
+
+1
+293
+0
+
+1
+333
+0
+
+1
+368
+0
+
+EOF
+		    ;;
+		6)
+		    # correcte by 2km
+		    func=3
+		    cat << EOF > tmp.in
+1
+0
+0
+
+1
+32
+0
+
+1
+72
+0
+
+
+EOF
+		    ;;
+		
+		*) 
+		    echo $0: error, profile $nprof undefined
+		    exit
+		    ;;
+	    esac
+	#
+	# get some default values for the boundaries
+	#
+	    if [ $dx -eq 0 ];then
+		gawk '{print($1,$4,$5)}' vprof.$model.$prof.dat  > gps.dat
+	    else
+		gawk '{print($1,$4,$5)}' vprof.$model.$prof.dat  | \
+		    gawk -v dx=$dx -f $owd/filter.awk > gps.dat
+	    fi
+	    minmax -C gps.dat | gawk '{xmin=$1-0.1;xmax=$2+0.1;range=xmax-xmin;print(xmin,xmax)}' > tmp.$$.dat
+	    read xmina xmaxa < tmp.$$.dat ; rm tmp.$$.dat
+	    if [ $xmin -eq 999 ];then
+		xmin=$xmina
+	    fi
+	    if [ $xmax -eq 999 ];then
+		xmax=$xmaxa
+	    fi
+	    
+	    $owd/bin/invert gps.dat $func $xmin $xmax $add_fault  < tmp.in > invert.log #2>> invert.log
+#	    $owd/bin/invert gps.dat $func $xmin $xmax $add_fault  < tmp.in ; exit
+
+
+	    rm tmp.in
+
+
+	    if [ ! -s  invert.log ];then
+		echo $0: inversion did not complete >> invert.log
+		cat invert.log
+	    else
+		cat invert.log
+	#
+	# plot (needs invert.log)
+	#	    
+		title="$model.$prof"
+		$owd/pinvert_sol "$title"
+		
+		if [ -s invert.ps ];then
+		    ps2pdf invert.ps; rm invert.ps; mv invert.pdf $owd/plots_`echo $name`/$model.$prof.$func.$add_fault.pdf
+		    rm invert.bestsol.dat invert.dat.out invert.fit.?.out fault.in invert.fit.out  2> /dev/null
+		else
+		    echo $0: plotting error
+		    exit
+		fi
+	    fi
+	    #
+	    # store log
+	    #
+	    mv invert.log  $owd/logs_`echo $name`/$model.$prof.$func.$add_fault.log
+	    rm gps.dat	
+	done
+
+    done
+    cd $owd
+done

@@ -1,0 +1,83 @@
+#!/bin/bash
+#
+# run a bunch of monte carlo inversions with fixed locking depth
+#
+ld=${1-10}
+models=${2-"kreemer_pbo2 kreemer_pbo"}		# datasets
+funcs=${3-"1 2 3 4 5 6"}		# number of faults
+profs=${4-"1a 1b 1c 2 3 4 5 6"}	# profiles
+
+
+if [ ! -s plots_locking_depth_fixed.$ld/ ];then		# plot output dir
+    mkdir plots_locking_depth_fixed.$ld
+fi
+if [ ! -s logs_locking_depth_fixed.$ld ];then		# log file dir 
+    mkdir logs_locking_depth_fixed.$ld
+fi
+
+tmpd=/tmp/$USER.$HOST.$$/
+trap "rm -rf $tmpd ; exit" 0 1 2 15
+owd=`pwd`
+mkdir $tmpd
+
+xmin=-400
+xmax=400
+for model in $models;do
+
+
+#
+# copy the data files
+#
+    rm $tmpd/* 2> /dev/null
+    cp vprof.$model.*.dat $tmpd
+    cd $tmpd
+
+    for func in $funcs;do
+	for prof in $profs ;do
+	    rm invert.bestsol.dat invert.dat.out invert.fit.?.out invert.fit.out invert.ps 2> /dev/null
+	    rm $owd/logs_locking_depth_fixed.$ld/$model.$prof.$func.log invert.log 2> /dev/null
+	    echo
+	    echo $0: running  $prof $func $model
+	    echo
+	    gawk '{print($1,$4,$5)}' vprof.$model.$prof.dat > gps.dat
+	    
+	    minmax -C gps.dat | gawk '{xmin=$1-0.1;xmax=$2+0.1;range=xmax-xmin;print(xmin,xmax)}' > tmp.$$.dat
+	    read xmin xmax < tmp.$$.dat ; rm tmp.$$.dat
+
+	    gawk -v ld=$ld -v nf=$func 'BEGIN{for(i=1;i<=nf;i++){print(0);print(1);print(ld)}}' > tmp.in
+
+	    $owd/bin/invert gps.dat $func $xmin $xmax > invert.log < tmp.in
+	    rm tmp.in
+
+	    if [ ! -s  invert.log ];then
+		echo $0: inversion error
+		exit
+	    fi
+	    cat invert.log
+
+	#
+	# plot (needs invert.log)
+	#
+	    title="$model.$prof"
+	    $owd/pinvert_sol "$title"
+	    if [ -s invert.ps ];then
+		ps2pdf invert.ps; rm invert.ps; mv invert.pdf $owd/plots_locking_depth_fixed.$ld/$model.$prof.$func.pdf
+		rm invert.bestsol.dat invert.dat.out invert.fit.?.out invert.fit.out  2> /dev/null
+	    else
+		echo $0: plotting error
+		exit
+	    fi
+	    #
+	    # store log
+	    #
+	    mv invert.log  $owd/logs_locking_depth_fixed.$ld/$model.$prof.$func.log
+
+	    rm gps.dat
+	done
+
+
+    done
+
+    cd $owd
+
+done

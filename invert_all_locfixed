@@ -1,0 +1,725 @@
+#!/bin/bash
+#
+# run a bunch of monte carlo inversions with fixed fault locations
+#
+# 42 is like 32, only run without averaging
+#
+models=${1-"kree_pbon_rf32 kree_pbo_rf22 kreemer_pbo2 kreemer_pbo kreemer_pbo3 "}		# datasets
+profs=${2-"1a2 1b1  1b2 1c1 2a 2b1 31 41 51 61"}	# profiles
+#profs=${2-"1a 1a1 1a2 1b 1b1 1c 1c1 2a 2b 2b1 3 31 4 41 5 51 6"}	# profiles
+#add_faults=${3-"0 1 2 "}	# additional, random faults
+add_faults=${3-"0"}	# additional, random faults
+ld=${4-14}			# max locking depth-1
+avg=${5-0}
+
+name=constrained_locfixed.$ld
+
+
+
+if [ ! -s plots_`echo $name`/ ];then		# plot output dir
+    mkdir plots_`echo $name`
+fi
+if [ ! -s logs_`echo $name` ];then		# log file dir 
+    mkdir logs_`echo $name`
+fi
+
+tmpd=/tmp/$USER.$HOST.$$.c/
+trap "rm -rf $tmpd ; exit" 0 1 2 15
+owd=`pwd`
+mkdir $tmpd
+
+for model in $models;do
+
+
+#
+# copy the data files
+#
+    rm -r $tmpd/* 2> /dev/null
+    cp vprof.$model.*.dat $tmpd
+    cd $tmpd
+
+    for add_fault in $add_faults;do	
+	for prof in $profs ;do
+	    
+	    rm invert.bestsol.dat invert.dat.out invert.fit.?.out fault.in invert.fit.out invert.ps 2> /dev/null
+	    rm $owd/logs_`echo $name`/$model.$prof.$func.log invert.log 2> /dev/null
+	    echo
+	    echo $0: running fixed location $prof $func $model additional faults $add_fault max ld $ld
+	    echo
+
+	    xmin=999;xmax=999
+	    # if second character is a 1 or 2 , use only first character, else use first two characters
+	    prof_name=`echo $prof | gawk '{if((substr($1,2,1)=="1")||(substr($1,2,1)=="2"))print(substr($1,1,1));else print(substr($1,1,2))}'`
+	    
+	    case $prof in
+		1a)
+		    func=6	# sixth was added from best-fit (41.2, but no goo)
+		    cat << EOF > tmp.in
+1 
+-170
+0
+
+1
+-70
+0
+
+1
+-42
+0
+
+1 
+-30
+0
+
+1
+0
+0
+
+1
+30
+0
+
+EOF
+		    ;;
+		1a1)		# the best-constrained faults from the 1a profile
+		    func=4
+		    cat << EOF > tmp.in
+1
+-70
+0
+
+1
+-35
+0
+
+1
+0
+0
+
+1
+30
+0
+
+
+
+EOF
+
+		    ;;
+		1a2)		# the best-constrained faults from the 1a profile, but using two strands of SJF
+		    func=5
+		    cat << EOF > tmp.in
+1
+-70
+0
+
+1
+-42
+0
+
+1 
+-30
+0
+
+1
+0
+0
+
+1
+30
+0
+
+
+
+EOF
+
+		    ;;
+
+		1b)
+		    func=6
+		    cat << EOF > tmp.in
+1 
+-150
+0
+
+1
+-78
+0
+
+1
+-44
+0
+
+1 
+-38
+0
+
+1
+-5
+0
+
+1
+30
+0
+
+EOF
+		    ;;
+		1b1)		# well constrained faults from 1b
+		    func=4
+		    cat << EOF > tmp.in
+1
+-76
+0
+
+1
+-42
+0
+
+1
+-6
+0
+
+1
+30
+0
+
+EOF
+		    ;;
+		1b2)		# well constrained faults from 1b, adjusted for PBOn
+		    func=4
+		    cat << EOF > tmp.in
+1
+-75
+0
+
+1
+-41
+0
+
+1
+-4
+0
+
+1
+31
+0
+
+EOF
+		    ;;
+		1c)
+		    func=5
+		    cat << EOF > tmp.in
+1 
+-140
+0
+
+1
+-80
+0
+
+1
+-43
+0
+
+1
+0
+0
+
+1
+30
+0
+
+EOF
+		    ;;
+		1c1)		# well constrained from 1c
+		    func=4
+		    cat << EOF > tmp.in
+1
+-80
+0
+
+1
+-40
+0
+
+1
+-6
+0
+
+1
+29
+0
+
+
+EOF
+		    ;;
+
+		1c2)		# well constrained from 1c, adjusted for PBOn
+		    func=4
+		    cat << EOF > tmp.in
+1
+-80
+0
+
+1
+-40
+0
+
+1
+-9
+0
+
+1
+27
+0
+
+
+EOF
+		    ;;
+
+		2a)
+		    func=1
+		    cat <<EOF > tmp.in
+1
+0
+0
+EOF
+
+
+		    ;;
+		2b)
+		    # corrected by -3
+		    func=13
+		    cat << EOF > tmp.in
+1 
+-147
+0
+
+1
+-129
+0
+
+
+1
+-64
+0
+
+1
+-33
+0
+
+1
+0
+0
+
+1
+38
+0
+
+1
+59
+0
+
+1
+78
+0
+
+
+1
+106
+0
+
+1
+132
+0
+
+1
+164
+0
+
+1
+190
+0
+
+1
+237
+0
+
+EOF
+		    ;;
+		2b1)
+		    # zero slip faults from prof 2b remove
+		    func=6
+		    cat << EOF > tmp.in
+
+
+1
+-64
+0
+
+1
+3
+0
+
+1
+59
+0
+
+1
+106
+0
+
+1
+164
+0
+
+1
+237
+0
+
+EOF
+		    ;;
+		2b2)
+		    # zero slip faults from prof 2b remove, adjusted for PBOn
+		    func=6
+		    cat << EOF > tmp.in
+
+
+1
+-64
+0
+
+1
+7
+0
+
+1
+59
+0
+
+1
+106
+0
+
+1
+164
+0
+
+1
+237
+0
+
+EOF
+		    ;;
+		3)
+		    func=5
+		    cat << EOF > tmp.in
+1
+-32
+0
+
+1
+5
+0
+
+1
+220
+0
+
+1
+245
+0
+
+1
+295
+0
+
+EOF
+		    ;;
+		31)
+		    func=4
+		    cat << EOF > tmp.in
+1
+-32
+0
+
+1
+5
+0
+
+1
+220
+0
+
+1
+295
+0
+
+EOF
+		    ;;
+		32)
+		    func=1
+		    cat << EOF > tmp.in
+1
+5
+0
+
+
+EOF
+		    ;;
+
+		4)
+		    func=5
+cat <<EOF > tmp.in
+1
+-70
+0
+
+
+1
+0
+0
+
+1
+225
+0
+
+1
+250
+0
+
+1
+275
+0
+
+EOF
+
+		    ;;
+		41)
+		    func=3
+cat <<EOF > tmp.in
+
+1
+0
+0
+
+1
+225
+0
+
+
+1
+275
+0
+
+EOF
+
+		    ;;
+		5)
+		    # corrected by 3
+		    func=6
+		    cat << EOF > tmp.in
+1
+-11
+0
+
+1
+0
+0
+
+1
+30
+1
+1
+
+1
+53
+0
+
+1
+293
+0
+
+1
+333
+0
+
+EOF
+		    ;;
+		51)
+		    func=5
+		    cat << EOF > tmp.in
+1
+-6
+0
+
+1
+30
+1
+1
+
+1
+53
+0
+
+1
+292
+0
+
+1
+333
+0
+
+EOF
+		    ;;
+		52)
+		    func=5
+		    cat << EOF > tmp.in
+1
+-7
+0
+
+1
+30
+1
+1
+
+1
+53
+0
+
+1
+292
+0
+
+1
+333
+0
+
+EOF
+		    ;;
+		6)
+		    # correcte by 2km
+		    func=4
+		    cat << EOF > tmp.in
+1
+0
+0
+
+1
+32
+0
+
+1
+72
+0
+
+1
+270
+0
+
+
+EOF
+		    ;;
+		61)
+		    # new locations
+		    func=4
+		    cat << EOF > tmp.in
+1
+0
+0
+
+1
+45
+0
+
+1
+85
+0
+
+1
+270
+0
+
+
+EOF
+		    ;;
+		
+		*) 
+		    echo $0: error, profile $nprof undefined
+		    exit
+		    ;;
+	    esac
+	#
+	# get some default values for the boundaries
+	#
+	    gawk '{print($1,$4,$5)}' vprof.$model.$prof_name.dat  > gps.dat
+
+	    minmax -C gps.dat | gawk '{xmin=$1-0.1;xmax=$2+0.1;range=xmax-xmin;print(xmin,xmax)}' > tmp.$$.dat
+	    read xmina xmaxa < tmp.$$.dat ; rm tmp.$$.dat
+	    if [ $xmin -eq 999 ];then
+		xmin=$xmina
+	    fi
+	    if [ $xmax -eq 999 ];then
+		xmax=$xmaxa
+	    fi
+	    if [ $avg -eq 1 ];then
+		binary=$owd/bin/invert_old
+	    else
+		binary=$owd/bin/invert_noavg
+	    fi
+	    echo
+	    echo $0: WARNING: using $binary
+	    echo
+	    rm invert.bestsol.dat invert.dat.out invert.fit.out  invert.log invert.fit.*.out 2> /dev/null
+
+	    ((use_func=100+func))
+	    $binary gps.dat $use_func $xmin $xmax $add_fault $ld < tmp.in > invert.log 2>> invert.2.log
+
+	    rodir=$owd/results/$name/$model.$prof.$func.$add_fault/
+	    mkdir -p $rodir
+	    rm $rodir/* 2> /dev/null
+	    for cf in invert.bestsol.dat invert.dat.out invert.2.log invert.fit.out  invert.chi2.dat ;do
+		cp $cf $rodir/
+	    done
+	    iii=1
+	    while [ -s invert.fit.$iii.out ];do # single fault solution
+		cp invert.fit.$iii.out  $rodir/
+		((iii=iii+1))
+	    done
+	    
+
+	    
+
+
+	    if [ ! -s  invert.log ];then
+		echo $0: inversion did not complete 
+	    else
+		cat invert.log
+	    fi
+	    #
+	    # store log
+	    #
+	    cp invert.log  $rodir/
+
+
+	    # do an Lev Mar inversion
+	    rm invert.lm.log  invert.bestsol.dat invert.dat.out invert.fit.out  invert.log invert.fit.*.out \
+		invert.lmcov.out invert.fit.out 2> /dev/null 
+	    $binary  gps.dat -$func $xmin $xmax $add_fault $ld < tmp.in > invert.lm.log 
+	    cp invert.lm.log $rodir/
+	    cp invert.lmcov.out $rodir/
+	    cp invert.fit.out $rodir/invert.lm.fit.log
+	    cp invert.chi2.dat $rodir/invert.lm.chi2.dat
+
+
+	    gzip -f $rodir/*
+
+	    #
+	    # plot
+	    #
+	    $owd/pinvert_sol $model.$prof.$func.$add_fault $name
+	    rm gps.dat	tmp.in
+	done
+    done
+    cd $owd
+done
