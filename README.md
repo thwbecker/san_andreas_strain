@@ -12,5 +12,12 @@ doi:10.1029/2010GC003060, 2010.
 
 The code fragments should be complete but might not work out of the box. 
 
+Compilation (see makefile) requires SLATEC. 
+
+There are a couple of driver routines that illustrate how the invert code can be used. 
+
+This is a >10 year old research code that has not been comprehensively tested for applications outside the speciific data used in this paper, 
+and there is no additional documentation. 
+
 
 Thorsten Becker - thwbecker@post.harvard.edu, 03/2021
