@@ -1,0 +1,625 @@
+#!/bin/bash
+#
+# plot best solution parameters
+#
+model=${1--1}			# -1: use local dir, else check in results dir
+model_type=${2-constrained_locfixed.14}
+show_hist=${3-0}		# use show_hist = 1 for free x location, show_hist = 0 else
+show_prof_labels=${4-1}		# add labels along the profiles
+make_eps=${5-1}
+plot_lm=${6-0}			# plot the levenber Marquardt
+use_gv=${7-0}			# 1: show plot 2: print 3: make PDF
+long_label=${8-1}
+
+confidence=0.683			# percent with range, for one sigma
+
+
+tmpd=/tmp/$USER.$HOST.$$.p/
+trap "rm -rf $tmpd ; exit" 0 1 2 15
+odir=$HOME/data/gps/san_andreas_strain/
+
+if [ $show_hist -eq 1 ];then
+    autolabel=1
+else
+    autolabel=0
+fi
+
+mkdir $tmpd
+
+cd $tmpd
+
+if [ $model = "-1" ];then
+    title=current
+    cp $odir/invert.bestsol.dat $odir/invert.dat.out $odir/invert.fit.out $odir/invert.log .
+else
+
+    # copy from existing run
+    orig_dir=$odir/results/$model_type/$model/
+    if [ ! -s $orig_dir ];then
+	echo $0: error, $orig_dir not found
+	exit
+    fi
+    rm invert.bestsol.dat invert.dat.out \
+	invert.fit.out invert.log invert.lm.log invert.lm.fit.log \
+	fit.csv  2> /dev/null
+
+    for ttt in invert.bestsol.dat invert.dat.out \
+	invert.fit.out invert.log invert.lm.log invert.lm.fit.log ;do
+	if [ -s $orig_dir/$ttt.gz ];then
+	    zcat $orig_dir/$ttt.gz > $ttt
+	fi
+    done
+    # delete potential old single fault profiles
+    rm invert.fit.?.out invert.fit.1?.out invert.fit.2?.out 2> /dev/null
+
+    i=1
+    while [ -s $orig_dir/invert.fit.$i.out.gz ];do # individual fault solutions
+	zcat $orig_dir/invert.fit.$i.out.gz > invert.fit.$i.out
+	((i=i+1))
+    done
+
+    title=`echo $model | gawk 'BEGIN{FS="."}{printf("%s.%s",$1,$2)}'`
+    echo $title
+    # prof name
+    prof_name=`echo $model | gawk 'BEGIN{FS="."}{if((substr($2,2,1)=="a") || (substr($2,2,1)=="b") || (substr($2,2,1)=="c"))print(substr($2,1,2));else print(substr($2,1,1))}'`
+    echo prof name: $prof_name 
+    # pick plate velocity
+    ref_frame_nr=`echo $model | gawk 'BEGIN{FS="."}{if(match($1,"rf2")||match($1,"rf3")||match($1,"rf4"))print(2);else print(1)}'`
+    echo ref frame $ref_frame_nr
+    plate_vel=`gawk -v n=$ref_frame_nr '{printf("%.1f",$(3+n))}' $datadir/gps/san_andreas_strain/vprof.pbo.$prof_name.relvel.dat`
+    
+fi
+gmtset HEADER_FONT_SIZE 20
+
+if [[ ! -s invert.bestsol.dat || ! -s invert.dat.out || ! -s invert.fit.out ]];then
+    echo $0: file error
+    exit
+fi
+
+# 
+
+# number of functions
+nfunc=`head -1 invert.bestsol.dat | gawk '{print((NF-2)/3)}'`
+echo $0: determined $nfunc faults
+
+#
+# do we have a levmar inversion ?
+#
+
+
+ 
+# best sol
+rm tmp.bestsol.dat 2> /dev/null
+
+#
+# first line is either best MC solution, or proper Lev Mar solution
+#
+#
+# this did not work on compute nodes???
+gawk '{if(NR==1)print($0)}'  invert.bestsol.dat > tmp.bestsol.dat 
+
+
+
+
+# total displacement
+tu=`gawk '{for(i=5;i<=NF;i+=3)tu+=$(i);printf("%.1f",tu)}' tmp.bestsol.dat`
+#
+# velocity shift
+ushift=`gawk '{printf("%.1f",$2)}' tmp.bestsol.dat`
+#
+# chi2 misfit
+#
+chi2s=`gawk '{printf("@~c@~@+2@+ = %.1f",$1)}' tmp.bestsol.dat`
+min_chi2=`gawk '{print($1)}' tmp.bestsol.dat`
+
+
+#
+#
+#
+dof=`head -1 invert.log | gawk '{print($10)}' ` # degrees of freedom
+red_chi=`head -1 invert.log | gawk '{printf("%.2f",$14)}' ` # reduced chi2 
+#
+# left and right slip
+uleft=`head -1 invert.log | gawk '{printf("%.1f",$16)}'`
+uright=`head -1 invert.log | gawk '{printf("%.1f",$18)}'`
+
+
+echo DOF data $dof $min_chi2 reduced chi2 $red_chi 
+echo chji2 range in solution file: `gawk -v col=1 -f minmax.awk invert.bestsol.dat`
+echo $0: best solution
+cat tmp.bestsol.dat
+
+
+
+
+#
+# chi2, yoff, offset, locking depth, total slip
+
+
+ndata=`gawk '{if(NR>1)print($1,$2)}' invert.dat.out  | lc`
+fs=""
+npara_dof=0
+# count degrees of freedom
+i=1
+while [ $i -le $nfunc ];do
+    for j in 1 2 3;do
+	if [ `gawk -v set=$i -v j=$j '{print($(2+(set-1)*3+j))}' invert.bestsol.dat  | gawk -f standarddev.awk | gawk '{if($1<1e-5)print(1);else print(0)}'` -eq 0 ];then
+	    # not fixed
+	    ((npara_dof=npara_dof+1))
+	fi
+    done
+    ((i=i+1))
+done
+
+
+chilim=`deltachi2 $confidence  $npara_dof`
+echo DOF npara $npara_dof confidence $confidence delta_chi $chilim
+nallsol=`lc invert.bestsol.dat`
+#
+# select solutions within confidence range
+#
+gawk -v mc=$min_chi2 '{printf("%.8e ",$1-mc);for(i=2;i<=NF;i++)printf("%.8e ",$(i));printf("\n")}' invert.bestsol.dat  | \
+    sort -n | gawk -v dc=$chilim '{if($1<=dc)print($0)}' > invert.bestsol.dchi.$$.dat
+
+echo $0: selected `lc invert.bestsol.dchi.$$.dat` out of $nallsol solutions for confidence range
+
+
+proj=-JX3
+
+gawk '{print($1)}' invert.bestsol.dat | \
+    pshistogram -Z1 $proj -W5 -P  -Ggray -L0.5 -B:"@~c@~@+2@+":/:"number":WeSn > pi.x2.ps
+
+rm tmp.$$.bfit tmp.$$.2.bfit 2> /dev/null
+i=1
+while [ $i -le $nfunc ];do
+    for j in 1 2 3;do
+	if [ $j -eq 1 ];then
+	    xlabel[$j]="x@-off@-[km]"
+	    col=red
+	elif [ $j -eq 2 ];then
+	    xlabel[$j]="D@-l@-[km]"
+	    col=green
+	else
+	    xlabel[$j]="@~D@~u@-@$i@-[mm/yr]"
+	    col=blue
+	fi
+	# best fitX
+	bf[$j]=`gawk  -v set=$i -v j=$j '{printf("%.8e",$(2+(set-1)*3+j))}' tmp.bestsol.dat`
+	#
+	# from solutions within confidence
+	gawk  -v set=$i -v j=$j '{printf("%.8e\n",$(2+(set-1)*3+j))}' invert.bestsol.dchi.$$.dat > tmp.$$.dat
+	# median within range
+	median[$j]=`gawk -f median.awk tmp.$$.dat`
+	minrange[$j]=`gawk -f min.awk tmp.$$.dat`
+	maxrange[$j]=`gawk -f max.awk tmp.$$.dat`
+
+
+	echo variable ${xlabel[$j]} within confidence median  ${median[$j]}   min ${minrange[$j]} max ${maxrange[$j]}
+
+	# 
+	# fixed?
+	if [ `gawk -v set=$i -v j=$j '{print($(2+(set-1)*3+j))}' invert.bestsol.dat  | gawk -f standarddev.awk | gawk '{if($1<1e-5)print(1);else print(0)}'` -eq 1 ];then
+	    width[$j]=1
+	    wlabel[$j]=5
+	    echo $0: func $i parameter $j is fixed
+	    reg=`gawk -v set=$i -v j=$j '{if(NR==1)print($(2+(set-1)*3+j))}' invert.bestsol.dat | gawk -f mean.awk | gawk '{printf("-R%g/%g/0/100",$1-10,$1+10)}'`
+	    fixed[$j]=1
+	else
+	    if [ $autolabel -eq 1 ];then
+		width[$j]=`gawk -v set=$i -v j=$j '{print($(2+(set-1)*3+j))}' invert.bestsol.dat  | gawk -f standarddev.awk | gawk '{print($1/3)}'`
+		wlabel[$j]=`echo ${width[$j]} | gawk '{printf("%.1f",$1*5)}'`
+	    else
+		if [ $j -eq 1 ];then # xoff
+		    width[$j]=10
+		    wlabel[$j]=50
+		elif [ $j -eq 2 ];then # Dl
+		    width[$j]=1
+		    wlabel[$j]=5
+		else		# slip
+		    width[$j]=1
+		    wlabel[$j]=5
+		fi
+	    fi
+        # determine region
+	    echo variable ${xlabel[$j]} plotting range ${width[$j]} ${wlabel[$j]} $autolabel
+	    gawk -v set=$i -v j=$j \
+		'{print($(2+(set-1)*3+j))}' invert.bestsol.dat | pshistogram -Z1 -I  -W${width[$j]} 2> tmp.$$.dat
+	    reg=`tail -1 tmp.$$.dat | gawk '{printf("-R%g/%g/0/%g",$6,$7,$9)}'`; rm tmp.$$.dat
+	    fixed[$j]=0
+	fi
+
+	if [ ${fixed[$j]} -eq 0 ];then
+	# plot histogram
+	    gawk -v set=$i -v j=$j  '{print($(2+(set-1)*3+j))}' invert.bestsol.dat | \
+		pshistogram -Z1 $proj -W${width[$j]} -P $reg -G$col -L0.5 \
+		-Ba`echo ${wlabel[$j]}`f`echo ${width[$j]}`:"${xlabel[$j]}":/a5f1:"N/N@-0@- [%]":WeSn -K > pi.$i.$j.ps
+	    echo ${bf[$j]} 0 | psxy $reg $proj -O -Sd0.25 -Gdark`echo $col` -W0.5 -N >> pi.$i.$j.ps
+	fi
+#	gv  pi.$i.$j.ps
+    done
+    #
+    # map plot of chi in D u space
+    # 
+    col1=2;col2=3
+    gawk -v mc=$min_chi2 -v set=$i -v c1=$col1 -v c2=$col2 \
+	'{print($(2+(set-1)*3+c1),$(2+(set-1)*3+c2),($1-mc))}' invert.bestsol.dat > tmp.$$.dat
+
+#	'{print($(2+(set-1)*3+c1),$(2+(set-1)*3+c2),($1-mc)/mc*100)}' invert.bestsol.dat > tmp.$$.dat
+    if [ `gawk -v col=2 -f minmax.awk tmp.$$.dat | gawk '{if($2-$1 < 1e-3)print(1);else print(0)}'` -eq 1 ];then # zero slip solution
+# regular
+	incs=`gawk -f minmaxallcol.awk tmp.$$.dat  | gawk '{printf("%g/%g",($2-$1)/200,2/200)}'`
+	incsf=`gawk -f minmaxallcol.awk tmp.$$.dat  | gawk '{printf("%g/%g",($2-$1)/60,2/60)}'`
+	reg=`gawk '{print($1,$2-1);print($1,$2+1)}' tmp.$$.dat | minmax -I$incs`
+    else
+	# regular
+	incs=`gawk -f minmaxallcol.awk tmp.$$.dat  | gawk '{printf("%g/%g",($2-$1)/50,($4-$3)/50)}'`
+	incsf=`gawk -f minmaxallcol.awk tmp.$$.dat  | gawk '{printf("%g/%g",($2-$1)/20,($4-$3)/20)}'`
+	reg=`minmax -I$incs tmp.$$.dat`
+    fi
+    echo
+    echo $0: minmax range for D u chi2: `minmax -C tmp.$$.dat`
+    echo $0: $reg $incs $incsf
+    echo
+    
+    blockmedian $reg -I$incsf tmp.$$.dat | surface $reg -I$incs -T0  -Lld -Lud -Gtmp.$$.s.grd
+    #surface tmp.$$.dat $reg -I$incs -Lld -Lud  -Gtmp.$$.s.grd -T0
+
+#    surface tmp.$$.dat $reg -I$incs -Lld -Lud  -Gtmp.$$.g.grd
+
+    # fractional sum of entries in %
+    nl=`lc tmp.$$.dat`
+    #gawk -v nl=$nl '{print($1,$2,1/nl*100)}' tmp.$$.dat | blockmean $reg -I$incsf -Sz -C  | surface $reg -I$incs  -Gtmp.$$.s.grd -Lld -Lud 
+    #gawk -v nl=$nl '{print($1,$2,1/nl*100)}' tmp.$$.dat | blockmean $reg -I$incsf -Sz  -C | xyz2grd $reg -I$incsf  -Gtmp.$$.s.grd 
+
+
+#    grdinfo tmp.$$.g.grd
+#    grdinfo tmp.$$.s.grd
+
+    cp tmp.$$.s.grd $HOME/tmp/tmp.grd
+    
+
+    # mask by coverage
+    grdmask tmp.$$.dat $reg -I$incs -S$incsf -NNaN/1/1 -Gtmp.$$.1.grd
+    grdmath tmp.$$.s.grd tmp.$$.1.grd MUL = tmp.$$.2.grd; mv tmp.$$.2.grd  tmp.$$.s.grd
+
+    # smooth
+#    rm tmp.$$.s.2.grd 2> /dev/null
+#    grdfilter -D0 -Fg.25 tmp.$$.s.grd -Gtmp.$$.s.2.grd #-Np
+#    if [ -s tmp.$$.s.2.grd ];then
+#	mv tmp.$$.s.2.grd tmp.$$.s.grd
+#    fi
+
+
+
+    echo $0: sum: `grd2sum tmp.$$.s.grd`
+
+
+  #  rm tmp.$$.1.grd
+#    grd2cpt -Chaxby tmp.$$.g.grd > tmp.$$.cpt
+
+    #makecpt -T0/25/0.1 -D -Chaxby  > tmp.$$.cpt
+
+#    makecpt -T0/5/0.01 -D -Chaxby  > tmp.$$.cpt
+
+    #grd2cpt tmp.$$.s.grd -E21 -I -Chaxby > tmp.$$.cpt
+    makecpt -I -T5/15/.5 -Chaxby > tmp.$$.cpt
+
+
+    # plot of misfit or hit count values values
+    offs=`echo ${bf[1]} | gawk '{printf("%.1f",$1)}'`
+    grdimage $proj $reg tmp.$$.s.grd -Ba`echo ${wlabel[2]}`f`echo ${width[2]}`:"${xlabel[$col1]}":/a`echo ${wlabel[3]}`f`echo ${width[3]}`:"${xlabel[$col2]}"::."fault $i, x = $offs km":WeSn \
+	-Ctmp.$$.cpt -K > pi.$i.4.ps
+
+
+    #grdcontour  $proj $reg tmp.$$.s.grd -C$chilim -O -K -S4 >> pi.$i.4.ps 
+    echo npara_dof $npara_dof delta_chi: $chilim
+    grd2xyz tmp.$$.s.grd | gawk -v cl=$chilim '{if($3<cl)print($1,$2)}' > tmp.$$.x.dat
+    head tmp.$$.x.dat
+    gawk -f centroid.awk tmp.$$.x.dat > tmp.$$.cent
+    read centx centy < tmp.$$.cent
+    xr=`gawk -v col=1 -f minmax.awk tmp.$$.x.dat`
+    yr=`gawk -v col=2 -f minmax.awk tmp.$$.x.dat`
+    # plot a circle at the centroid
+    #echo $centx $centy | psxy -O -K $reg $proj -Sc.2 -G0 >> pi.$i.4.ps
+    # plot a circle at the median value
+    echo  ${median[2]}  ${median[3]} | psxy -O -K $reg $proj -Sc.2 -W5 >> pi.$i.4.ps
+
+    echo $centx $centy $xr $yr
+    echo $xr $centy | gawk '{print($1,$3);print($2,$3)}' | psxy -O -K $reg $proj -W8 >> pi.$i.4.ps
+    echo $centx $yr  | gawk '{print($1,$2);print($1,$3)}' | psxy -O -K $reg $proj -W8 >> pi.$i.4.ps
+
+    # 
+    # best fit log for fixed x_off
+    # 
+    echo fault $i $offs best ${bf[$col1]} ${bf[$col2]} cent $centx $centy xrange $xr yrange $yr >> tmp.$$.bfit
+
+    
+    echo fault $i ${bf[1]} ${median[1]} ${minrange[1]} ${maxrange[1]} \
+	${bf[3]} ${median[3]} ${minrange[3]} ${maxrange[3]} \
+	${bf[2]} ${median[2]} ${minrange[2]} ${maxrange[2]}  >> tmp.$$.2.bfit
+
+    tail -1 tmp.$$.2.bfit
+
+   
+    #
+    # find the best chi within the confidence limit
+    #
+
+    # contour of hitcount
+    #grdcontour $proj $reg -C0.05 -S2 -W0.5 tmp.$$.s.grd -O -K >> pi.$i.4.ps
+
+    #gawk '{print($1,$2)}' tmp.$$.dat | psxy $reg $proj -Sc.01 -G0 -O -K >> pi.$i.4.ps
+
+    if [[ $plot_lm -eq 1 && -s invert.lm.log ]];then # if we have Lev Mar solution plot error bars
+    # extract best fit data
+	cat invert.lm.log | gawk -v c1=$col1 -v c2=$col2 -v fuse=$i \
+	    '{if(match($1,"func")){f++;if(f==fuse){p[1]=$3;sp[1]=$5;p[2]=$8;sp[2]=$10;p[3]=$13;sp[3]=$15;print(p[c1],p[c2],sp[c1],sp[c2])}}}' | \
+	    psxy -Exy/10 -Ss.1   $reg $proj -O -K >> pi.$i.4.ps
+    fi
+
+
+    # min misfit
+    echo ${bf[$col1]} ${bf[$col2]} | psxy -Sa.3 -N -W8,0 $reg $proj -O -K >> pi.$i.4.ps
+    bfstring=`echo ${bf[$col1]} ${bf[$col2]} | gawk '{printf("u = %.1f mm/yr, D@-l@- = %.1f km",$2,$1)}'`
+    echo 0.5 1.075 18 0 0 CM "$bfstring" | pstext -N -R0/1/0/1 $proj -O -K >> pi.$i.4.ps
+    # most common value 
+    #grdinfo -M -C tmp.$$.s.grd | gawk '{print($14,$15)}' |  psxy -Sc.3 -N -W8 $reg $proj -O -K >> pi.$i.4.ps
+
+    #psscale -E -Ctmp.$$.cpt -B1/:"@~d@~ [%]": -O -D4.2/2/2/.25 >> pi.$i.4.ps
+    #psscale -Ef -Ctmp.$$.cpt -B.1/:"@~d@~": -O -D4.2/2/2/.25 >> pi.$i.4.ps
+    psscale -Ef -Ctmp.$$.cpt -B5/:"@~Dc@~@+2@+": -O -D3.2/2/2/.25 >> pi.$i.4.ps
+
+    fixed[4]=0
+
+    #gv pi.$i.4.ps
+    rm tmp.$$.g.grd tmp.$$.cpt tmp.$$.s.grd 2> /dev/null
+
+    
+    freecount=0
+    if [ $show_hist -eq 1 ];then
+	list="1 2 3"
+    else
+	list="1 2 3 4"
+    fi
+    for j in $list;do
+	if [ ${fixed[$j]} -eq 0 ];then
+	    modifybb pi.$i.$j.ps 2> /dev/null
+	    ((freecount=freecount+1))
+	    if [ $show_hist -eq 1 ];then
+		fs="$fs pi.$i.$j.ps"
+	    fi
+	fi
+    done
+    if [ $show_hist -eq 0 ];then
+	fs="$fs pi.$i.4.ps"
+    fi
+    ((i=i+1))
+done
+#
+# misfit stats
+#
+#
+
+echo "> 0 .95 20 0 0 LT 22p 10i l" > tmp.$$.2.dat
+if [ $show_hist -eq 0 ];then 	# x loc fixed
+    gawk '{printf("F%i: x@-off@-=%4.0f km; @~D@~u=%2.0f(@-%2.0f@-%2.0f@+%2.0f@+) mm/yr; D@-l@-=%2.0f(@-%2.0f@-%2.0f@+%2.0f@+) km \n\n",$2,$3,$6,$14,$9,$15,$5,$11,$8,$12)}' \
+	tmp.$$.bfit >> tmp.$$.2.dat
+else
+    #  1    2          3         4           5               6              7           8           9        10                
+    # fault 1 -2.25933650e+01 -22.591 -2.37015740e+01 -2.15540430e+01 2.08415340e+01 20.8431 1.85625270e+01 2.31947880e+01 
+    #     11         12            13           14
+    # 4.02834510e+01 40.2833 3.90122990e+01 4.16449170e+0
+    gawk '{printf("F%i: x@-off@-=%4.0f(@-%4.0f@-%4.0f@+%4.0f@+) km; @~D@~u=%2.0f(@-%2.0f@-%2.0f@+%2.0f@+) mm/yr; D@-l@-=%2.0f(@-%2.0f@-%2.0f@+%2.0f@+) km \n\n",
+               $2,$3,$5,$4,$6,$7,$9,$8,$10,$11,$13,$12,$14)}' tmp.$$.2.bfit >> tmp.$$.2.dat
+fi
+pstext -R0/1/0/1 -N -JX10/5 tmp.$$.2.dat -M > tmp.bf.ps
+
+mkdir -p $odir/plots_`echo $model_type`/iplots/$model/
+echo "fault; best du; min du; median du; max du; best Dl; min Dl; median Dl; max Dl" > $odir/plots_`echo $model_type`/iplots/$model/bestfit.csv
+gawk '{printf("%i; %2.1f; %2.1f;%2.1f;%2.1f;\t\t %2.1f;%2.1f;%2.1f;%2.1f;\n",$2,$7,$9,$8,$10,$11,$13,$12,$14)}'  tmp.$$.2.bfit >> \
+    $odir/plots_`echo $model_type`/iplots/$model/bestfit.csv
+
+echo
+cat tmp.$$.bfit
+echo
+cat tmp.$$.2.bfit
+echo
+
+
+
+
+echo "fault; best xoff; min xoff; median xoff; max xoff; best du; min du; median du; max du; best Dl; min Dl; median Dl; max Dl" > $odir/plots_`echo $model_type`/iplots/$model/bestfit2.csv
+gawk '{printf("%i; %4.0f ;%4.0f;%4.0f;%4.0f\t\t; %2.1f; %2.1f;%2.1f;%2.1f;\t\t %2.1f;%2.1f;%2.1f;%2.1f;\n",$2,$3,$5,$4,$6,$7,$9,$8,$10,$11,$13,$12,$14)}'  tmp.$$.2.bfit >> \
+    $odir/plots_`echo $model_type`/iplots/$model/bestfit2.csv
+
+
+#
+# add overview plot
+#
+#
+use_data_name=`echo $title | gawk 'BEGIN{FS="."}{if((substr($2,2,1)=="1")||(substr($2,2,1)=="2"))printf("%s.%s",$1,substr($2,1,1));else printf("%s.%s",$1,substr($2,1,2))}'`
+echo $use_data_name
+if [ -s $odir/vprof.$use_data_name.dat ];then
+    odata=$odir/vprof.$use_data_name.dat
+else
+    odata=$odir/`head -1 invert.dat.out | gawk '{print($2)}'` # original data
+fi
+
+if [ ! -s $odata ];then
+    echo $0: original data file not found $odata
+    exit
+fi
+if [ `head -1 $odata | gawk '{print(NF)}'` -eq 3 ];then
+    echo $0: assuming three column format for $odata
+    ucol1=2;ucol2=3;
+else
+    echo $0: assuming GPS data format for $odata, using columns 1, 4, 5
+    ucol1=4;ucol2=5
+fi
+
+
+reg=`gawk -v c1=$ucol1 -v c2=$ucol2 '{print($1,$(c1),$(c2))}' $odata | minmax -I10/5`
+
+
+echo $reg | gawk -f reg2wesn.awk | gawk '{print($1,$2,$3,$4)}' > tmp.$$.dat
+read xmin xmax ymin ymax < tmp.$$.dat; rm tmp.$$.dat # actual extreme values
+
+yminu=-25;ymaxu=25		# y max values to use
+reg=-R$xmin/$xmax/$yminu/$ymaxu
+
+
+proj=-JX10/5
+
+
+
+gmtset LABEL_FONT_SIZE	14
+if [ $long_label -eq 1 ];then
+    gawk -v c1=$ucol1 -v c2=$ucol2 '{print($1,$(c1),$(c2))}' $odata | \
+	psxy -Ey $reg $proj -P \
+	-Ba50f5:"distance along profile [km]":/a10f1:"normal velocity [mm/yr]"::."$title, @~D@~u@-t@- = $tu(@-$uleft@-@+$uright@+), u@-p@- = $plate_vel, u@-0@- = $ushift":WeSn -K > prof.ps
+    
+else
+    gawk -v c1=$ucol1 -v c2=$ucol2 '{print($1,$(c1),$(c2))}' $odata | \
+	psxy -Ey $reg $proj -P \
+	-Ba50f5:"distance along profile [km]":/a10f1:"normal velocity [mm/yr]":WeSn -K > prof.ps
+
+fi
+echo 0.02 0.95 36  0 0 ML "Profile $prof_name" | pstext -R0/1/0/1 $proj -O -K -N >> prof.ps
+gawk  -v c1=$ucol1 -v c2=$ucol2 '{print($1,$(c1))}' $odata | psxy -Sc0.1 $reg $proj -G0 -O -K >> prof.ps
+lmode=2
+if [ $lmode -eq 1 ];then
+    echo 0.9 0.95 28  0 0 MR "$chi2s" | pstext -R0/1/0/1 $proj -O -K -N >> prof.ps
+    echo 0.9 0.85 28  0 0 MR "DOF = $dof" | pstext -R0/1/0/1 $proj -O -K -N >> prof.ps
+    echo 0.9 0.75 28  0 0 MR "@~c@~@-r@- = $red_chi" | pstext -R0/1/0/1 $proj -O -K -N >> prof.ps
+    echo 0.9 0.65 28  0 0 MR "N = $ndata" | pstext -R0/1/0/1 $proj -O -K -N >> prof.ps
+    echo 0.9 0.55 28  0 0 MR "u@-p@- = $plate_vel" | pstext -R0/1/0/1 $proj -O -K -N >> prof.ps
+else
+    echo 0.975 0.95 14  0 0 MR "$chi2s" | pstext -R0/1/0/1 $proj -O -K -N >> prof.ps
+    echo 0.975 0.9 14  0 0 MR "DOF = $dof" | pstext -R0/1/0/1 $proj -O -K -N >> prof.ps
+    echo 0.975 0.85 14  0 0 MR "@~c@~@-r@- = $red_chi" | pstext -R0/1/0/1 $proj -O -K -N >> prof.ps
+    echo 0.975 0.8 14  0 0 MR "N = $ndata" | pstext -R0/1/0/1 $proj -O -K -N >> prof.ps
+    echo 0.975 0.75 14  0 0 MR "u@-p@- = $plate_vel" | pstext -R0/1/0/1 $proj -O -K -N >> prof.ps
+fi
+    
+# individual
+i=1
+while [ $i -le $nfunc ];do
+    if [ $nfunc -ne 1 ];then
+	col=`platecolor $i`
+    else
+	col=red
+    fi
+	# vertical line for location
+    off=`gawk -v i=$i '{printf("%.0f",$(2+(i-1)*3+1))}' tmp.bestsol.dat`
+    w=`gawk -v i=$i '{printf("%.0f",$(2+(i-1)*3+2))}' tmp.bestsol.dat`
+    u=`gawk -v i=$i '{printf("%.0f",$(2+(i-1)*3+3))}' tmp.bestsol.dat`
+    echo
+    echo $0: nfunc: $i off: $off w: $w u: $u
+    # labels
+    if [ $show_prof_labels -eq 1 ];then
+	# slip
+	echo $off $ymaxu $u | gawk '{print($1,$2*1.2,14,0,0,"MR","@~D@~u=" $3)}' | \
+	    pstext $reg $proj -O -K -G$col -N >> prof.ps
+	# locking depth
+	echo $off $ymaxu $w | gawk '{print($1,$2*1.08,14,0,0,"MR","D@-l@-=" $3)}' | \
+	    pstext $reg $proj -O -K -G$col -N >> prof.ps
+	
+    # vertical line
+	gawk -v i=$i -v ymin=$yminu -v ymax=$ymaxu -v off=$off 'BEGIN{print(off,ymin);print(off,ymax)}'  | \
+	    psxy -W8,$col,- $reg $proj -O -K >> prof.ps
+    fi
+    if [ $nfunc -ne 1 ];then
+    # additional curve
+	if [ -s  invert.fit.$i.out ];then
+	    head -1 invert.fit.$i.out
+	    psxy -H1 invert.fit.$i.out -W4,$col $reg $proj -O -K >> prof.ps
+	fi
+    fi
+    
+    ((i=i+1))
+done
+
+cat invert.log | \
+    gawk '{if($1=="best"){u0=$3;}if(match($1,"func")){f++;printf("f_%i, u_0, %12lg, NaN, x_off, %12lg, NaN, w, %12lg, NaN, u, %12lg, NaN\n",f,u0,$3,$5,$7)}}' > fit.csv
+
+if [ -s invert.lm.log ];then
+    # extract best fit data
+    cat invert.lm.log | gawk '{if($1=="best"){u0=$3;su0=substr($4,2,length($4)-1)};if(match($1,"func")){f++;printf("fLM_%i, u_0, %12lg, %12lg, x_off, %12lg, %12lg, w, %12lg, %12lg, u, %12lg, %12lg\n",f,u0,su0,$3,$5,$8,$10,$13,$15)}}' >> fit.csv
+fi
+
+
+#
+# used data
+gawk '{if(NR>1)print($1,$2,$3)}' invert.dat.out | psxy -Ey $reg $proj -Wred -K -O >> prof.ps
+gawk '{if(NR>1)print($1,$2)}' invert.dat.out  | psxy -Sc0.1 $reg $proj -Gred -W0.5 -O  -K >> prof.ps
+#
+
+
+# total best fitting function
+psxy invert.fit.out -W8,red $reg $proj -O -K >> prof.ps
+if [[ $plot_lm -eq 1 && -s invert.lm.fit.log ]];then
+    echo $0: plotting Lev Mar
+    psxy invert.lm.fit.log -W8,darkred,. $reg $proj -O -K >> prof.ps
+fi
+
+echo 1000 1000 | psxy $reg $proj -O -Sa.1 >> prof.ps
+modifybb prof.ps
+
+gmtset LABEL_FONT_SIZE	24
+
+if [ $show_hist -eq 1 ];then
+    epsmerge --orientation Landscape -xcs 0.1 -ycs 0.05 -par -x $freecount -y $nfunc  -par $fs   > pi.ps  2> /dev/null
+else
+    epsmerge --orientation Landscape -xcs 0.1 -ycs 0.1 -par -x 5 $fs   > pi.ps  2> /dev/null
+fi
+epsmerge --orientation Landscape -xcs 0.1 -ycs 0.1 -par -x 3 $fs   > pi2.ps  2> /dev/null
+modifybb pi.ps
+modifybb tmp.bf.ps
+
+rm $fs
+epsmerge --orientation Landscape -x 1 -y 2 -par pi.ps  tmp.bf.ps > tmp.ps 2> /dev/null
+#gv tmp.ps
+epsmerge --print --postscript -x 1 -y 2 -par tmp.ps prof.ps > invert.ps 2> /dev/null
+
+#
+# add data ?
+#
+#\a2ps -1 -r -f 9 fit.csv -o fit.ps
+#epsmerge -x 1 -y 1 -par invert.ps fit.ps > tmp.$$.ps 2> /dev/null
+#mv tmp.$$.ps invert.ps
+
+cp pi2.ps prof.ps $odir/plots_`echo $model_type`/iplots/$model/
+
+
+rm prof.ps pi.ps fit.ps tmp.bf.ps pi2.ps
+
+
+if [ ! $model = "-1" ];then
+    if [ $make_eps -eq 1 ];then
+	mv invert.ps $odir/plots_`echo $model_type`/$model.ps
+	gzip -f  $odir/plots_`echo $model_type`/$model.ps
+	echo $0: output in $odir/plots_`echo $model_type`/$model.ps.gz
+	if [ $use_gv -eq 1 ];then gv $odir/plots_`echo $model_type`/$model.ps.gz ;fi
+	if [ $use_gv -eq 2 ];then gunzip $odir/plots_`echo $model_type`/$model.ps.gz ; lpr -Pps_zhs264_cl $odir/plots_`echo $model_type`/$model.ps; gzip -f $odir/plots_`echo $model_type`/$model.ps;fi
+	if [ $use_gv -eq 3 ];then gunzip $odir/plots_`echo $model_type`/$model.ps.gz 
+
+	    ps2pdf $odir/plots_`echo $model_type`/$model.ps 
+	    
+	    mv $model.pdf $HOME/tmp/$model.$model_type.pdf
+	    echo $0: output in $HOME/tmp/$model.$model_type.pdf
+	    gzip -f $odir/plots_`echo $model_type`/$model.ps
+	fi
+    else			# make PDF
+	ps2pdf invert.ps 
+	mv invert.pdf $odir/plots_`echo $model_type`/$model.pdf
+	echo $0: output in $odir/plots_`echo $model_type`/$model.pdf
+	if [ $use_gv -eq 1 ];then gv $odir/plots_`echo $model_type`/$model.pdf ;fi
+    fi
+    cp fit.csv  $odir/plots_`echo $model_type`/$model.fit.csv
+else
+    echo $0: output in invert.ps
+    cp invert.ps $odir/invert.ps
+    if [ $use_gv -eq 1 ];then gv $odir/invert.ps ;fi 
+fi
+rm tmp.bestsol.dat invert.bestsol.dchi.$$.dat
+gmtset    HEADER_FONT_SIZE 36
